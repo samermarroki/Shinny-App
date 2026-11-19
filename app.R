@@ -216,4 +216,6 @@ server <- function(input, output, session) {
 }
 
 shinyApp(ui, server)
-
+tr <- wines |> filter(Varietal == "Dry white", Month <= max(Month) - 12)
+m <- tr |> model(ARIMA = ARIMA(Sales))
+m
