@@ -212,6 +212,34 @@ server <- function(input, output, session) {
       select(Varietal, Model = .model, Window, RMSE, MAE, MAPE) |>
       arrange(Varietal, Window, RMSE) |>
       mutate(across(c(RMSE, MAE, MAPE), ~ round(.x, 2)))
+      output$debug <- renderPrint({
+    tr <- split_info()$train |> filter(Varietal == input$varietals[1])
+
+    cat("R:", R.version.string, "\n\nPackage versions:\n")
+    print(sapply(c("fable", "fabletools", "feasts", "tsibble", "distributional"),
+                 function(p) as.character(packageVersion(p))))
+
+    cat("\nTraining rows:", nrow(tr), " NAs in Sales:", sum(is.na(tr$Sales)), "\n")
+
+    try_fit <- function(label, expr) {
+      msgs <- character()
+      res <- withCallingHandlers(
+        tryCatch(expr, error = function(e) paste("ERROR:", conditionMessage(e))),
+        warning = function(w) { msgs <<- c(msgs, conditionMessage(w)); invokeRestart("muffleWarning") })
+      ok <- !is.character(res) && !inherits(res$A[[1]]$fit, "NULL")
+      cat("\n", label, "\n  result: ", if (is.character(res)) res else format(res$A[[1]]), "\n", sep = "")
+      if (length(msgs)) cat("  warnings: ", paste(msgs, collapse = " | "), "\n")
+    }
+
+    try_fit("1. Auto ARIMA (what the app uses)",
+            tr |> model(A = ARIMA(Sales)))
+    try_fit("2. Auto ARIMA, stepwise = FALSE",
+            tr |> model(A = ARIMA(Sales, stepwise = FALSE)))
+    try_fit("3. Auto ARIMA, approximation = FALSE",
+            tr |> model(A = ARIMA(Sales, approximation = FALSE)))
+    try_fit("4. Fixed order (0,1,1)(0,1,1)[12]",
+            tr |> model(A = ARIMA(Sales ~ pdq(0,1,1) + PDQ(0,1,1))))
+  })
   })
 }
 
