@@ -28,16 +28,16 @@ parse_month <- function(x) {
   yearmonth(as.Date(d))
 }
 
-wines <- long |>
-  mutate(Month = parse_month(Month),
-         Sales = suppressWarnings(as.numeric(Sales))) |>
-  filter(!is.na(Month)) |>
-  as_tsibble(index = Month, key = Varietal) |>
-  fill_gaps() |>
-  group_by_key() |>
-  mutate(Sales = zoo::na.approx(Sales, na.rm = FALSE)) |>
-  ungroup() |>
-  filter(!is.na(Sales))
+wines <- long
+wines$Month <- parse_month(wines$Month)
+wines$Sales <- suppressWarnings(as.numeric(wines$Sales))
+wines <- wines[!is.na(wines$Month), ]
+wines <- as_tsibble(wines, index = Month, key = Varietal)
+wines <- fill_gaps(wines)
+wines <- group_by_key(wines)
+wines <- mutate(wines, Sales = zoo::na.approx(Sales, na.rm = FALSE))
+wines <- ungroup(wines)
+wines <- filter(wines, !is.na(Sales))
 
 all_varietals <- sort(unique(wines$Varietal))
 date_min <- as.Date(min(wines$Month))
@@ -71,7 +71,7 @@ ui <- page_sidebar(
     nav_panel("About", markdown(
       "**Data:** AustralianWines.csv (monthly sales by varietal, 1980 to 1995). Missing months are linearly interpolated.
 
-**Method:** TSLM, ETS, and ARIMA models are auto-specified with the fable package and fit on a training window. They are evaluated on a held-out validation window, then forecast forward.
+**Method:** TSLM, ETS, and ARIMA models are fit with the fable package on a training window, evaluated on a held-out validation window, then forecast forward. ETS and TSLM are fully automatic. For ARIMA, the differencing orders were fixed (d = 0, D = 1) because automatic differencing failed in the deployed environment; the AR and MA orders are selected automatically.
 
 **Packages:** shiny, bslib, tidyverse, tsibble, fable, feasts, fabletools, lubridate, zoo.
 
@@ -82,9 +82,9 @@ ui <- page_sidebar(
 
 # ---- Server -----------------------------------------------------------
 server <- function(input, output, session) {
-  
+
   facet_scales <- reactive(if (isTRUE(input$free_y)) "free_y" else "fixed")
-  
+
   dat <- reactive({
     req(length(input$varietals) >= 1, input$dates)
     wines |>
@@ -92,7 +92,7 @@ server <- function(input, output, session) {
              Month >= yearmonth(input$dates[1]),
              Month <= yearmonth(input$dates[2]))
   })
-  
+
   split_info <- reactive({
     d <- dat()
     validate(need(nrow(d) > 0, "No data in this range."))
@@ -103,13 +103,13 @@ server <- function(input, output, session) {
                   "Training window too short. Widen the date range or shrink the validation window."))
     list(train = train, valid = filter(d, Month > cutoff), cutoff = cutoff)
   })
-  
+
   fits <- reactive({
     req(length(input$models) > 0)
     tr <- split_info()$train
-    
+
     withProgress(message = "Fitting models...", value = 0.5, {
-            f <- if (isTRUE(input$log_tx)) {
+      f <- if (isTRUE(input$log_tx)) {
         tr |> model(
           TSLM  = TSLM(log(Sales) ~ trend() + season()),
           ETS   = ETS(log(Sales)),
@@ -122,18 +122,17 @@ server <- function(input, output, session) {
           ARIMA = ARIMA(Sales ~ pdq(0:3, 0, 0:3) + PDQ(0:2, 1, 0:2))
         )
       }
-      }
       f <- f |> mutate(Ensemble = (TSLM + ETS + ARIMA) / 3)
       keep <- intersect(c("TSLM", "ETS", "ARIMA", "Ensemble"),
                         sub(" \\(mean of all\\)", "", input$models))
       f |> select(Varietal, all_of(keep))
     })
   })
-  
+
   fcst <- reactive({
     fits() |> forecast(h = input$val_months + input$horizon)
   })
-  
+
   output$overview <- renderPlot({
     dat() |>
       as_tibble() |>
@@ -144,11 +143,11 @@ server <- function(input, output, session) {
       labs(y = "Sales (thousand litres)", x = NULL) +
       theme_minimal(base_size = 14)
   })
-  
+
   output$decomp <- renderPlot({
     req(length(input$varietals) >= 1)
     v <- input$varietals[1]
-    
+
     comp <- dat() |>
       filter(Varietal == v) |>
       model(STL(Sales ~ season(window = "periodic"))) |>
@@ -162,27 +161,27 @@ server <- function(input, output, session) {
       pivot_longer(-Date, names_to = "Component", values_to = "Value") |>
       mutate(Component = factor(Component,
                                 levels = c("Data", "Trend", "Seasonal", "Remainder")))
-    
+
     ggplot(comp, aes(Date, Value)) +
       geom_line(colour = "steelblue") +
       facet_wrap(~Component, ncol = 1, scales = "free_y") +
       labs(title = paste("STL decomposition:", v), x = NULL, y = NULL) +
       theme_minimal(base_size = 13)
   })
-  
+
   output$fc_plot <- renderPlot({
     si <- split_info()
     L <- input$level / 100
-    
+
     fc <- fcst() |>
       mutate(lo = quantile(Sales, (1 - L) / 2),
              hi = quantile(Sales, 1 - (1 - L) / 2),
              pt = .mean) |>
       as_tibble() |>
       mutate(Date = as.Date(Month))
-    
+
     hist <- dat() |> as_tibble() |> mutate(Date = as.Date(Month))
-    
+
     ggplot() +
       geom_line(data = hist, aes(Date, Sales), colour = "grey30") +
       geom_ribbon(data = fc, aes(Date, ymin = lo, ymax = hi, fill = .model), alpha = 0.2) +
@@ -195,7 +194,7 @@ server <- function(input, output, session) {
       theme_minimal(base_size = 14) +
       theme(legend.position = "bottom")
   })
-  
+
   output$specs <- renderTable({
     fits() |>
       as_tibble() |>
@@ -206,7 +205,7 @@ server <- function(input, output, session) {
       })) |>
       select(Varietal, Model, Specification)
   })
-  
+
   output$acc <- renderTable({
     si <- split_info()
     train_acc <- accuracy(fits()) |> mutate(Window = "Train")
@@ -219,19 +218,19 @@ server <- function(input, output, session) {
       arrange(Varietal, Window, RMSE) |>
       mutate(across(c(RMSE, MAE, MAPE), ~ round(.x, 2)))
   })
-  
+
   # ---- Debug: shows why ARIMA fails in a given environment ------------
   output$debug <- renderPrint({
     tr <- split_info()$train |> filter(Varietal == input$varietals[1])
-    
+
     cat("R:", R.version.string, "\n\nPackage versions:\n")
     print(sapply(c("fable", "fabletools", "feasts", "tsibble", "distributional"),
                  function(p) as.character(packageVersion(p))))
-    
+
     cat("\nVarietal:", input$varietals[1],
         "| Training rows:", nrow(tr),
         "| NAs in Sales:", sum(is.na(tr$Sales)), "\n")
-    
+
     try_fit <- function(label, expr) {
       msgs <- character()
       res <- withCallingHandlers(
@@ -241,20 +240,16 @@ server <- function(input, output, session) {
           invokeRestart("muffleWarning")
         })
       out <- if (is.character(res)) res else tryCatch(format(res$A[[1]]),
-                                                      error = function(e) "could not format")
+                                                       error = function(e) "could not format")
       cat("\n", label, "\n  result: ", out, "\n", sep = "")
       if (length(msgs)) cat("  warnings: ", paste(msgs, collapse = " | "), "\n", sep = "")
     }
-    
-    try_fit("1. Auto ARIMA (what the app uses)",
+
+    try_fit("1. Auto ARIMA (fully automatic)",
             tr |> model(A = ARIMA(Sales)))
-    try_fit("2. Auto ARIMA, stepwise = FALSE",
-            tr |> model(A = ARIMA(Sales, stepwise = FALSE)))
-    try_fit("3. Auto ARIMA, approximation = FALSE",
-            tr |> model(A = ARIMA(Sales, approximation = FALSE)))
     try_fit("4. Fixed order (0,1,1)(0,1,1)[12]",
             tr |> model(A = ARIMA(Sales ~ pdq(0,1,1) + PDQ(0,1,1))))
-    try_fit("5. Search AR/MA orders, d=0, D=1 fixed",
+    try_fit("5. Search AR/MA orders, d=0, D=1 fixed (what the app uses)",
             tr |> model(A = ARIMA(Sales ~ pdq(0:3, 0, 0:3) + PDQ(0:2, 1, 0:2))))
   })
 }
