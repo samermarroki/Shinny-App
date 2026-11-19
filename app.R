@@ -71,7 +71,7 @@ ui <- page_sidebar(
     nav_panel("About", markdown(
       "**Data:** AustralianWines.csv (monthly sales by varietal). Missing months are linearly interpolated.\n\n
 **Packages:** fable, feasts, tsibble, shiny, bslib.\n\n
-**Acknowledgments:** Add any adapted snippets/LLM assistance here."))
+**Acknowledgments:** Claude was used to assist with drafting the code. The app was tested by the auther. Materials from course ADS 506 were used as example and refrences for the app."))
   )
 )
 
