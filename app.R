@@ -253,6 +253,8 @@ server <- function(input, output, session) {
             tr |> model(A = ARIMA(Sales, approximation = FALSE)))
     try_fit("4. Fixed order (0,1,1)(0,1,1)[12]",
             tr |> model(A = ARIMA(Sales ~ pdq(0,1,1) + PDQ(0,1,1))))
+    try_fit("5. Search AR/MA orders, d=0, D=1 fixed",
+            tr |> model(A = ARIMA(Sales ~ pdq(0:3, 0, 0:3) + PDQ(0:2, 1, 0:2))))
   })
 }
 
