@@ -109,18 +109,19 @@ server <- function(input, output, session) {
     tr <- split_info()$train
     
     withProgress(message = "Fitting models...", value = 0.5, {
-      f <- if (isTRUE(input$log_tx)) {
+            f <- if (isTRUE(input$log_tx)) {
         tr |> model(
           TSLM  = TSLM(log(Sales) ~ trend() + season()),
           ETS   = ETS(log(Sales)),
-          ARIMA = ARIMA(log(Sales))
+          ARIMA = ARIMA(log(Sales) ~ pdq(0:3, 0, 0:3) + PDQ(0:2, 1, 0:2))
         )
       } else {
         tr |> model(
           TSLM  = TSLM(Sales ~ trend() + season()),
           ETS   = ETS(Sales),
-          ARIMA = ARIMA(Sales)
+          ARIMA = ARIMA(Sales ~ pdq(0:3, 0, 0:3) + PDQ(0:2, 1, 0:2))
         )
+      }
       }
       f <- f |> mutate(Ensemble = (TSLM + ETS + ARIMA) / 3)
       keep <- intersect(c("TSLM", "ETS", "ARIMA", "Ensemble"),
