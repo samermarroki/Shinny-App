@@ -69,9 +69,14 @@ ui <- page_sidebar(
     nav_panel("Model specs", tableOutput("specs")),
     nav_panel("Accuracy", tableOutput("acc")),
     nav_panel("About", markdown(
-      "**Data:** AustralianWines.csv (monthly sales by varietal). Missing months are linearly interpolated.\n\n
-**Packages:** fable, feasts, tsibble, shiny, bslib.\n\n
-**Acknowledgments:** Claude was used to assist with drafting the code. App was tested by the author. Materials from ADS 506 were used as refrences and examples to guide the creation of this app."))
+      "**Data:** AustralianWines.csv (monthly sales by varietal, 1980 to 1995). Missing months are linearly interpolated.
+
+**Method:** TSLM, ETS, and ARIMA models are auto-specified with the fable package and fit on a training window. They are evaluated on a held-out validation window, then forecast forward.
+
+**Packages:** shiny, bslib, tidyverse, tsibble, fable, feasts, fabletools, lubridate, zoo.
+
+**Acknowledgments:** App code was drafted with assistance from Claude (Anthropic) and reviewed, tested, and deployed by the author.")),
+    nav_panel("Debug", verbatimTextOutput("debug"))
   )
 )
 
@@ -213,7 +218,42 @@ server <- function(input, output, session) {
       arrange(Varietal, Window, RMSE) |>
       mutate(across(c(RMSE, MAE, MAPE), ~ round(.x, 2)))
   })
+  
+  # ---- Debug: shows why ARIMA fails in a given environment ------------
+  output$debug <- renderPrint({
+    tr <- split_info()$train |> filter(Varietal == input$varietals[1])
+    
+    cat("R:", R.version.string, "\n\nPackage versions:\n")
+    print(sapply(c("fable", "fabletools", "feasts", "tsibble", "distributional"),
+                 function(p) as.character(packageVersion(p))))
+    
+    cat("\nVarietal:", input$varietals[1],
+        "| Training rows:", nrow(tr),
+        "| NAs in Sales:", sum(is.na(tr$Sales)), "\n")
+    
+    try_fit <- function(label, expr) {
+      msgs <- character()
+      res <- withCallingHandlers(
+        tryCatch(expr, error = function(e) paste("ERROR:", conditionMessage(e))),
+        warning = function(w) {
+          msgs <<- c(msgs, conditionMessage(w))
+          invokeRestart("muffleWarning")
+        })
+      out <- if (is.character(res)) res else tryCatch(format(res$A[[1]]),
+                                                      error = function(e) "could not format")
+      cat("\n", label, "\n  result: ", out, "\n", sep = "")
+      if (length(msgs)) cat("  warnings: ", paste(msgs, collapse = " | "), "\n", sep = "")
+    }
+    
+    try_fit("1. Auto ARIMA (what the app uses)",
+            tr |> model(A = ARIMA(Sales)))
+    try_fit("2. Auto ARIMA, stepwise = FALSE",
+            tr |> model(A = ARIMA(Sales, stepwise = FALSE)))
+    try_fit("3. Auto ARIMA, approximation = FALSE",
+            tr |> model(A = ARIMA(Sales, approximation = FALSE)))
+    try_fit("4. Fixed order (0,1,1)(0,1,1)[12]",
+            tr |> model(A = ARIMA(Sales ~ pdq(0,1,1) + PDQ(0,1,1))))
+  })
 }
 
 shinyApp(ui, server)
-
